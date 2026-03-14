@@ -3,6 +3,7 @@
 
 #include <allocator_dbg_helper.h>
 #include <pp_allocator.h>
+#include <mutex>
 
 class allocator_global_heap final:
     private allocator_dbg_helper,
@@ -10,32 +11,33 @@ class allocator_global_heap final:
 {
 
 private:
+    std::mutex mtx;
 
     static constexpr const size_t size_t_size = sizeof(size_t);
 
 public:
-    
-    explicit allocator_global_heap();
-    
-    ~allocator_global_heap() override;
-    
+
+    explicit allocator_global_heap() = default;
+
+    ~allocator_global_heap() override = default;
+
     allocator_global_heap(
         allocator_global_heap const &other);
-    
+
     allocator_global_heap &operator=(
         allocator_global_heap const &other);
-    
+
     allocator_global_heap(
         allocator_global_heap &&other) noexcept;
-    
+
     allocator_global_heap &operator=(
         allocator_global_heap &&other) noexcept;
 
 private:
-    
+
     [[nodiscard]] void *do_allocate_sm(
         size_t size) override;
-    
+
     void do_deallocate_sm(
         void *at) override;
 
