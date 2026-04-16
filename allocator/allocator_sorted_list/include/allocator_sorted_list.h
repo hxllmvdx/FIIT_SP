@@ -14,7 +14,7 @@ class allocator_sorted_list final:
 {
 
 private:
-    
+
     void *_trusted_memory;
 
     static constexpr const size_t allocator_metadata_size = sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
@@ -27,31 +27,40 @@ public:
             size_t space_size,
             std::pmr::memory_resource *parent_allocator = nullptr,
             allocator_with_fit_mode::fit_mode allocate_fit_mode = allocator_with_fit_mode::fit_mode::first_fit);
-    
-    allocator_sorted_list(
-        allocator_sorted_list const &other);
-    
-    allocator_sorted_list &operator=(
-        allocator_sorted_list const &other);
 
     allocator_sorted_list(
-        allocator_sorted_list &&other) noexcept;
-    
+        allocator_sorted_list const &other) = delete;
+
     allocator_sorted_list &operator=(
-        allocator_sorted_list &&other) noexcept;
+        allocator_sorted_list const &other) = delete;
+
+    allocator_sorted_list(
+        allocator_sorted_list &&other) = delete;
+
+    allocator_sorted_list &operator=(
+        allocator_sorted_list &&other) = delete;
 
     ~allocator_sorted_list() override;
 
 private:
-    
+
+    auto get_parent_allocator();
+    auto get_fit_mode();
+    auto get_total_size();
+    auto get_mutex();
+    auto get_free_head();
+
+    void insert_free_block(void *new_block);
+
+
     [[nodiscard]] void *do_allocate_sm(
         size_t size) override;
-    
+
     void do_deallocate_sm(
         void *at) override;
 
     bool do_is_equal(const std::pmr::memory_resource&) const noexcept override;
-    
+
     inline void set_fit_mode(
         allocator_with_fit_mode::fit_mode mode) override;
 
@@ -121,6 +130,8 @@ private:
         sorted_iterator();
 
         sorted_iterator(void* trusted);
+
+        void set_trusted_memory(void* trusted) noexcept;
     };
 
     friend class sorted_iterator;

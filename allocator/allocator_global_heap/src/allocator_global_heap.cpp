@@ -25,7 +25,7 @@ allocator_global_heap &allocator_global_heap::operator=(const allocator_global_h
 
 bool allocator_global_heap::do_is_equal(const std::pmr::memory_resource &other) const noexcept
 {
-    auto const* p = dynamic_cast<allocator_global_heap const*>(&other);
+    auto p = dynamic_cast<const allocator_global_heap*>(&other);
     return p != nullptr && p == this;
 }
 
