@@ -58,7 +58,7 @@ static void** get_phys_prev(void* block) {
 }
 
 static void set_phys_prev(void* block, void* phys_prev) {
-    *reinterpret_cast<void**>(static_cast<char*>(block) + sizeof(size_t) + 2 * sizeof(void*)) = phys_prev;
+    *get_phys_prev(block) = phys_prev;
 }
 
 static bool is_free(void* block) {
