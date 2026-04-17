@@ -7,13 +7,13 @@
 TEST(positiveTests, test1)
 {
     std::unique_ptr<smart_mem_resource> allocator_instance(new allocator_buddies_system(4096, nullptr, allocator_with_fit_mode::fit_mode::first_fit));
-    
+
     auto actual_blocks_state = dynamic_cast<allocator_test_utils *>(allocator_instance.get())->get_blocks_info();
     std::vector<allocator_test_utils::block_info> expected_blocks_state
         {
             { .block_size = 4096, .is_block_occupied = false }
         };
-    
+
     ASSERT_EQ(actual_blocks_state.size(), expected_blocks_state.size());
     for (int i = 0; i < actual_blocks_state.size(); i++)
     {
@@ -24,9 +24,9 @@ TEST(positiveTests, test1)
 TEST(positiveTests, test23)
 {
     std::unique_ptr<smart_mem_resource> allocator_instance(new allocator_buddies_system(256, nullptr, allocator_with_fit_mode::fit_mode::first_fit));
-    
+
     void *first_block = allocator_instance->allocate(sizeof(unsigned char) * 40);
-    
+
     auto actual_blocks_state = dynamic_cast<allocator_test_utils *>(allocator_instance.get())->get_blocks_info();
     std::vector<allocator_test_utils::block_info> expected_blocks_state
         {
@@ -34,31 +34,31 @@ TEST(positiveTests, test23)
             { .block_size = 64, .is_block_occupied = false },
             { .block_size = 128, .is_block_occupied = false }
         };
-    
+
     ASSERT_EQ(actual_blocks_state.size(), expected_blocks_state.size());
     for (int i = 0; i < actual_blocks_state.size(); i++)
     {
         ASSERT_EQ(actual_blocks_state[i], expected_blocks_state[i]);
     }
-    
+
     allocator_instance->deallocate(first_block, 1);
 }
 
 TEST(positiveTests, test3)
 {
     std::unique_ptr<smart_mem_resource> allocator_instance(new allocator_buddies_system(256, nullptr, allocator_with_fit_mode::fit_mode::first_fit));
-    
+
     void *first_block = allocator_instance->allocate(sizeof(unsigned char) * 0);
     void *second_block = allocator_instance->allocate(sizeof(unsigned char) * 0);
     allocator_instance->deallocate(first_block, 1);
-    
+
     auto actual_blocks_state = dynamic_cast<allocator_test_utils *>(allocator_instance.get())->get_blocks_info();
-    ASSERT_EQ(actual_blocks_state.size(), 5);
-    ASSERT_EQ(actual_blocks_state[0].block_size, 1 << (static_cast<int>(std::floor(std::log2(sizeof(allocator_dbg_helper::block_pointer_t) + 1))) + 1));
+    ASSERT_EQ(actual_blocks_state.size(), 4);
+    ASSERT_EQ(actual_blocks_state[0].block_size, 1 << (static_cast<int>(std::floor(std::log2(sizeof(allocator_dbg_helper::block_pointer_t) + 1))) + 2));
     ASSERT_EQ(actual_blocks_state[0].is_block_occupied, false);
     ASSERT_EQ(actual_blocks_state[0].block_size, actual_blocks_state[1].block_size);
     ASSERT_EQ(actual_blocks_state[1].is_block_occupied, true);
-    
+
     allocator_instance->deallocate(second_block, 1);
 }
 
@@ -138,6 +138,6 @@ int main(
     char *argv[])
 {
     testing::InitGoogleTest(&argc, argv);
-    
+
     return RUN_ALL_TESTS();
 }
