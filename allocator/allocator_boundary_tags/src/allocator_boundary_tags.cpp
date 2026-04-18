@@ -145,6 +145,8 @@ allocator_boundary_tags::allocator_boundary_tags(
 }
 
 [[nodiscard]] void* allocator_boundary_tags::do_allocate_sm(size_t size) {
+    std::lock_guard<std::mutex> lock(*get_mutex());
+
     size_t required_size = size + occupied_block_metadata_size;
 
     void* current = *get_free_list_head();
@@ -229,6 +231,8 @@ allocator_boundary_tags::allocator_boundary_tags(
 }
 
 void allocator_boundary_tags::do_deallocate_sm(void* at) {
+    std::lock_guard<std::mutex> lock(*get_mutex());
+
     if (at == nullptr) return;
 
     char* start = static_cast<char*>(_trusted_memory) + allocator_metadata_size;
