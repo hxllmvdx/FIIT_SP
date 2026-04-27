@@ -420,12 +420,16 @@ private:
         _root = new_root;
     }
 
-    void refresh_separator_after_leaf_change(path_type& path, const bptree_node_term* leaf) {
-        if (leaf == nullptr || leaf->_data.empty()) {
+    void refresh_separator_after_subtree_change(path_type& path, const bptree_node_base* node) {
+        if (node == nullptr) {
             return;
         }
 
-        const bptree_node_base* current = leaf;
+        if (is_terminal(node) && as_terminal(node)->_data.empty()) {
+            return;
+        }
+
+        const bptree_node_base* current = node;
         for (auto it = path.rbegin(); it != path.rend(); ++it) {
             auto* parent = it->first;
             const std::size_t child_index = it->second;
@@ -434,6 +438,10 @@ private:
             }
             current = parent;
         }
+    }
+
+    void refresh_separator_after_leaf_change(path_type& path, const bptree_node_term* leaf) {
+        refresh_separator_after_subtree_change(path, leaf);
     }
 
     [[nodiscard]] tkey separator_key_for_subtree(const bptree_node_base* node) const {
@@ -449,24 +457,6 @@ private:
         return leaf->_data.front().first;
     }
 
-    [[nodiscard]] std::vector<tree_data_type> dump_items() const {
-        std::vector<tree_data_type> items;
-        items.reserve(_size);
-
-        for (auto it = cbegin(); it != cend(); ++it) {
-            items.push_back(*it);
-        }
-
-        return items;
-    }
-
-    void rebuild_from_items(const std::vector<tree_data_type>& items) {
-        clear();
-        for (const auto& item : items) {
-            insert(item);
-        }
-    }
-
     [[nodiscard]] bool erase_from_leaf(bptree_node_term* leaf, std::size_t index) {
         if (leaf == nullptr || index >= leaf->_data.size()) {
             return false;
@@ -477,35 +467,250 @@ private:
     }
 
     bptree_iterator erase_and_get_next(const tkey& key) {
-        return erase(key);
+        auto [leaf, path] = locate_leaf_for_insert(key);
+        if (leaf == nullptr) {
+            return make_end_iterator();
+        }
+
+        const std::size_t index = lower_bound_index(leaf, key);
+        if (index >= leaf->_data.size() || !keys_equal(leaf->_data[index].first, key)) {
+            return make_end_iterator();
+        }
+
+        const bool has_next_in_leaf = index + 1 < leaf->_data.size();
+        const bool has_next_leaf = leaf->_next != nullptr;
+        const bool has_next = has_next_in_leaf || has_next_leaf;
+        const tkey next_key = has_next_in_leaf
+            ? leaf->_data[index + 1].first
+            : (has_next_leaf ? leaf->_next->_data.front().first : tkey{});
+
+        if (!erase_from_leaf(leaf, index)) {
+            return make_end_iterator();
+        }
+
+        --_size;
+
+        if (leaf == _root) {
+            if (leaf->_data.empty()) {
+                destroy_node(_root);
+                _root = nullptr;
+            }
+            return has_next ? lower_bound(next_key) : make_end_iterator();
+        }
+
+        if (!leaf->_data.empty()) {
+            refresh_separator_after_leaf_change(path, leaf);
+        }
+
+        if (leaf->_data.size() < minimum_keys_in_node) {
+            rebalance_after_erase(path, leaf);
+        } else {
+            collapse_root_if_needed();
+        }
+
+        return has_next ? lower_bound(next_key) : make_end_iterator();
     }
 
     void rebalance_after_erase(path_type& path, bptree_node_base* node) {
-        static_cast<void>(path);
-        static_cast<void>(node);
+        bptree_node_base* current = node;
+
+        while (current != _root) {
+            const std::size_t key_count = is_terminal(current)
+                ? as_terminal(current)->_data.size()
+                : as_middle(current)->_keys.size();
+
+            if (key_count >= minimum_keys_in_node) {
+                refresh_separator_after_subtree_change(path, current);
+                break;
+            }
+
+            if (!path.empty()) {
+                auto* borrowed = borrow_from_left(path, current);
+                if (borrowed != nullptr) {
+                    current = borrowed;
+                    refresh_separator_after_subtree_change(path, current);
+                    break;
+                }
+
+                borrowed = borrow_from_right(path, current);
+                if (borrowed != nullptr) {
+                    current = borrowed;
+                    refresh_separator_after_subtree_change(path, current);
+                    break;
+                }
+            }
+
+            if (path.empty()) {
+                break;
+            }
+
+            const std::size_t child_index = path.back().second;
+            if (child_index > 0) {
+                merge_with_left(path, current);
+            } else {
+                merge_with_right(path, current);
+            }
+
+            current = path.back().first;
+            path.pop_back();
+        }
+
+        collapse_root_if_needed();
     }
 
     [[nodiscard]] bptree_node_base* borrow_from_left(path_type& path, bptree_node_base* node) {
-        static_cast<void>(path);
+        if (path.empty()) {
+            return nullptr;
+        }
+
+        auto [parent, child_index] = path.back();
+        if (child_index == 0) {
+            return nullptr;
+        }
+
+        bptree_node_base* left_base = parent->_pointers[child_index - 1];
+
+        if (is_terminal(node)) {
+            auto* current = as_terminal(node);
+            auto* left = as_terminal(left_base);
+            if (left->_data.size() <= minimum_keys_in_node) {
+                return nullptr;
+            }
+
+            current->_data.insert(current->_data.begin(), std::move(left->_data.back()));
+            left->_data.pop_back();
+            parent->_keys[child_index - 1] = current->_data.front().first;
+            return node;
+        }
+
+        auto* current = as_middle(node);
+        auto* left = as_middle(left_base);
+        if (left->_keys.size() <= minimum_keys_in_node) {
+            return nullptr;
+        }
+
+        bptree_node_base* borrowed_child = left->_pointers.back();
+        left->_pointers.pop_back();
+        current->_pointers.insert(current->_pointers.begin(), borrowed_child);
+        current->_keys.insert(current->_keys.begin(), separator_key_for_subtree(current->_pointers[1]));
+        left->_keys.pop_back();
+        parent->_keys[child_index - 1] = separator_key_for_subtree(current);
         return node;
     }
 
     [[nodiscard]] bptree_node_base* borrow_from_right(path_type& path, bptree_node_base* node) {
-        static_cast<void>(path);
+        if (path.empty()) {
+            return nullptr;
+        }
+
+        auto [parent, child_index] = path.back();
+        if (child_index + 1 >= parent->_pointers.size()) {
+            return nullptr;
+        }
+
+        bptree_node_base* right_base = parent->_pointers[child_index + 1];
+
+        if (is_terminal(node)) {
+            auto* current = as_terminal(node);
+            auto* right = as_terminal(right_base);
+            if (right->_data.size() <= minimum_keys_in_node) {
+                return nullptr;
+            }
+
+            current->_data.push_back(std::move(right->_data.front()));
+            right->_data.erase(right->_data.begin());
+            parent->_keys[child_index] = right->_data.front().first;
+            return node;
+        }
+
+        auto* current = as_middle(node);
+        auto* right = as_middle(right_base);
+        if (right->_keys.size() <= minimum_keys_in_node) {
+            return nullptr;
+        }
+
+        bptree_node_base* borrowed_child = right->_pointers.front();
+        current->_pointers.push_back(borrowed_child);
+        current->_keys.push_back(separator_key_for_subtree(borrowed_child));
+        right->_pointers.erase(right->_pointers.begin());
+        right->_keys.erase(right->_keys.begin());
+        parent->_keys[child_index] = separator_key_for_subtree(right);
         return node;
     }
 
     void merge_with_left(path_type& path, bptree_node_base* node) {
-        static_cast<void>(path);
-        static_cast<void>(node);
+        assert(!path.empty());
+
+        auto [parent, child_index] = path.back();
+        assert(child_index > 0);
+
+        bptree_node_base* left_base = parent->_pointers[child_index - 1];
+
+        if (is_terminal(node)) {
+            auto* current = as_terminal(node);
+            auto* left = as_terminal(left_base);
+            left->_data.insert(left->_data.end(), current->_data.begin(), current->_data.end());
+            left->_next = current->_next;
+        } else {
+            auto* current = as_middle(node);
+            auto* left = as_middle(left_base);
+            left->_keys.push_back(parent->_keys[child_index - 1]);
+            left->_keys.insert(left->_keys.end(), current->_keys.begin(), current->_keys.end());
+            left->_pointers.insert(left->_pointers.end(), current->_pointers.begin(), current->_pointers.end());
+        }
+
+        parent->_keys.erase(parent->_keys.begin() + static_cast<std::ptrdiff_t>(child_index - 1));
+        parent->_pointers.erase(parent->_pointers.begin() + static_cast<std::ptrdiff_t>(child_index));
+        destroy_node(node);
     }
 
     void merge_with_right(path_type& path, bptree_node_base* node) {
-        static_cast<void>(path);
-        static_cast<void>(node);
+        assert(!path.empty());
+
+        auto [parent, child_index] = path.back();
+        assert(child_index + 1 < parent->_pointers.size());
+
+        bptree_node_base* right_base = parent->_pointers[child_index + 1];
+
+        if (is_terminal(node)) {
+            auto* current = as_terminal(node);
+            auto* right = as_terminal(right_base);
+            current->_data.insert(current->_data.end(), right->_data.begin(), right->_data.end());
+            current->_next = right->_next;
+        } else {
+            auto* current = as_middle(node);
+            auto* right = as_middle(right_base);
+            current->_keys.push_back(parent->_keys[child_index]);
+            current->_keys.insert(current->_keys.end(), right->_keys.begin(), right->_keys.end());
+            current->_pointers.insert(current->_pointers.end(), right->_pointers.begin(), right->_pointers.end());
+        }
+
+        parent->_keys.erase(parent->_keys.begin() + static_cast<std::ptrdiff_t>(child_index));
+        parent->_pointers.erase(parent->_pointers.begin() + static_cast<std::ptrdiff_t>(child_index + 1));
+        destroy_node(right_base);
     }
 
-    void collapse_root_if_needed() {}
+    void collapse_root_if_needed() {
+        if (_root == nullptr) {
+            return;
+        }
+
+        if (is_terminal(_root)) {
+            if (as_terminal(_root)->_data.empty()) {
+                destroy_node(_root);
+                _root = nullptr;
+            }
+            return;
+        }
+
+        auto* root = as_middle(_root);
+        if (root->_keys.empty() && !root->_pointers.empty()) {
+            bptree_node_base* new_root = root->_pointers.front();
+            root->_pointers.clear();
+            destroy_node(root);
+            _root = new_root;
+        }
+    }
 
     [[nodiscard]] bptree_iterator lower_bound_impl(const tkey& key) {
         if (_root == nullptr) {
@@ -957,24 +1162,7 @@ public:
         if (pos == make_end_iterator()) {
             return make_end_iterator();
         }
-
-        const tkey key = pos->first;
-        auto next = pos;
-        ++next;
-        const bool has_next = next != make_end_iterator();
-        const tkey next_key = has_next ? next->first : tkey{};
-
-        auto items = dump_items();
-        std::vector<tree_data_type> kept;
-        kept.reserve(items.size() - 1);
-        for (auto& item : items) {
-            if (!keys_equal(item.first, key)) {
-                kept.push_back(item);
-            }
-        }
-
-        rebuild_from_items(kept);
-        return has_next ? lower_bound(next_key) : make_end_iterator();
+        return erase_and_get_next(pos->first);
     }
 
     bptree_iterator erase(bptree_const_iterator pos) {
@@ -982,36 +1170,11 @@ public:
     }
 
     bptree_iterator erase(bptree_iterator beg, bptree_iterator en) {
-        if (beg == en) {
-            return en;
+        auto it = beg;
+        while (it != en) {
+            it = erase(it);
         }
-
-        const bool has_next = en != make_end_iterator();
-        const tkey next_key = has_next ? en->first : tkey{};
-
-        std::vector<tkey> keys_to_remove;
-        for (auto it = beg; it != en; ++it) {
-            keys_to_remove.push_back(it->first);
-        }
-
-        auto items = dump_items();
-        std::vector<tree_data_type> kept;
-        kept.reserve(items.size());
-        for (auto& item : items) {
-            bool should_remove = false;
-            for (const auto& key : keys_to_remove) {
-                if (keys_equal(item.first, key)) {
-                    should_remove = true;
-                    break;
-                }
-            }
-            if (!should_remove) {
-                kept.push_back(item);
-            }
-        }
-
-        rebuild_from_items(kept);
-        return has_next ? lower_bound(next_key) : make_end_iterator();
+        return it;
     }
 
     bptree_iterator erase(bptree_const_iterator beg, bptree_const_iterator en) {
