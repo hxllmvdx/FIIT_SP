@@ -772,43 +772,6 @@ private:
         return it;
     }
 
-    [[nodiscard]] bool use_legacy_mutable_iteration_window() const noexcept
-    {
-        if constexpr (maximum_keys_in_node != 9) {
-            return false;
-        }
-
-        if (_root == nullptr || _root->keys.size() != 1 || _root->children.size() != 2 || _size != 12) {
-            return false;
-        }
-
-        return _root->children[0] != nullptr
-            && _root->children[1] != nullptr
-            && _root->children[0]->is_leaf()
-            && _root->children[1]->is_leaf();
-    }
-
-    [[nodiscard]] std::size_t mutable_begin_offset() const
-    {
-        if (!use_legacy_mutable_iteration_window()) {
-            return 0;
-        }
-
-        const std::size_t left_size = _root->children[0]->keys.size();
-        return left_size >= 2 ? left_size - 2 : 0;
-    }
-
-    [[nodiscard]] std::size_t mutable_end_offset() const
-    {
-        if (!use_legacy_mutable_iteration_window()) {
-            return _size;
-        }
-
-        const std::size_t left_size = _root->children[0]->keys.size();
-        const std::size_t right_take = std::min<std::size_t>(3, _root->children[1]->keys.size());
-        return left_size + 1 + right_take;
-    }
-
     template <bool IsConst>
     [[nodiscard]] basic_btree_iterator<IsConst> lower_bound_impl(const tkey& key) const
     {
@@ -1052,12 +1015,12 @@ public:
 
     btree_iterator begin()
     {
-        return make_iterator_at_offset<false>(mutable_begin_offset());
+        return make_leftmost_iterator<false>();
     }
 
     btree_iterator end()
     {
-        return make_iterator_at_offset<false>(mutable_end_offset());
+        return make_end_iterator<false>();
     }
 
     btree_const_iterator begin() const
