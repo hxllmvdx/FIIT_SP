@@ -399,10 +399,6 @@ private:
     }
 
     void split_middle_and_insert(path_type& path, bptree_node_middle* node, std::size_t index, const tkey& separator_key, bptree_node_base* right_child) {
-        static_cast<void>(index);
-        static_cast<void>(separator_key);
-        static_cast<void>(right_child);
-
         const std::size_t middle_index = node->_keys.size() / 2;
         const tkey promoted_key = node->_keys[middle_index];
 
